@@ -1,0 +1,178 @@
+﻿@page "/"
+@inject WebSocket.Services.PedidoService PedidoService
+
+<h2 class="mb-4">📦 Painel de Pedidos</h2>
+
+<button class="btn btn-primary mb-4" @onclick="NovoPedido">+ Novo Pedido</button>
+
+<div class="row">
+    @foreach (var p in pedidos)
+    {
+        <div class="col-12 col-md-6 col-lg-4 mb-3" @key="p.Id">
+            <div class="card shadow card-base
+                                    @(p.Id == pedidoNovoId ? "card-novo" : "")
+                                    @(p.Id == pedidoAtualizadoId ? "card-atualizado" : "")
+                                    @(p.Id == pedidoDeletadoId ? "card-deletado" : "")">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between">
+                        <h5>#@p.Id - @p.Cliente</h5>
+                        <div>
+                            <button class="btn btn-sm btn-warning me-1" @onclick="() => Editar(p)">Editar</button>
+                            <button class="btn btn-sm btn-danger" @onclick="() => Deletar(p.Id)">Excluir</button>
+                        </div>
+                    </div>
+                    <p><strong>Produto:</strong> @p.Produto</p>
+                    <p><strong>Quantidade:</strong> @p.Quantidade</p>
+                    <span class="badge bg-@CorStatus(p.Status)">
+                        @p.Status
+                    </span>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@if (mostrarModal)
+{
+    <div class="modal d-block" style="background:rgba(0,0,0,0.5)">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5>Pedido</h5>
+                    <button class="btn-close" @onclick="FecharModal"></button>
+                </div>
+                <div class="modal-body">
+                    <input class="form-control mb-2" placeholder="Cliente" @bind="pedidoAtual.Cliente" />
+                    <input class="form-control mb-2" placeholder="Produto" @bind="pedidoAtual.Produto" />
+                    <input type="number" class="form-control mb-2" @bind="pedidoAtual.Quantidade" />
+                    <select class="form-select" @bind="pedidoAtual.Status">
+                        <option value="novo">Novo</option>
+                        <option value="preparando">Preparando</option>
+                        <option value="entregue">Entregue</option>
+                    </select>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="FecharModal">Cancelar</button>
+                    <button class="btn btn-primary" @onclick="Salvar">Salvar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+
+@code {
+    private List<WebSocket.Models.PedidoDotNet> pedidos = new();
+    private WebSocket.Models.PedidoDotNet pedidoAtual = new();
+    private bool mostrarModal = false;
+    private int? pedidoNovoId;
+    private int? pedidoAtualizadoId;
+    private int? pedidoDeletadoId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        pedidos = await PedidoService.ObterTodos();
+        await PedidoService.IniciarHub();
+
+        PedidoService.PedidoCriado += p =>
+        {
+            pedidos.Insert(0, p);
+            pedidoNovoId = p.Id;
+            StateHasChanged();
+            _ = Task.Delay(3000).ContinueWith(_ =>
+            {
+                pedidoNovoId = null;
+                InvokeAsync(StateHasChanged);
+            });
+        };
+
+        PedidoService.PedidoAtualizado += p =>
+        {
+            var index = pedidos.FindIndex(x => x.Id == p.Id);
+            if (index >= 0) pedidos[index] = p;
+            pedidoAtualizadoId = p.Id;
+            StateHasChanged();
+            _ = Task.Delay(2000).ContinueWith(_ =>
+            {
+                pedidoAtualizadoId = null;
+                InvokeAsync(StateHasChanged);
+            });
+        };
+
+        PedidoService.PedidoDeletado += id =>
+        {
+            pedidoDeletadoId = id;
+            StateHasChanged();
+
+            _ = Task.Delay(700).ContinueWith(_ =>
+            {
+                pedidos.RemoveAll(p => p.Id == id);
+                pedidoDeletadoId = null;
+                InvokeAsync(StateHasChanged);
+            });
+        };
+    }
+
+    private void NovoPedido()
+    {
+        pedidoAtual = new WebSocket.Models.PedidoDotNet();
+        mostrarModal = true;
+    }
+
+    private void Editar(WebSocket.Models.PedidoDotNet p)
+    {
+        pedidoAtual = new WebSocket.Models.PedidoDotNet
+        {
+            Id = p.Id,
+            Cliente = p.Cliente,
+            Produto = p.Produto,
+            Quantidade = p.Quantidade,
+            Status = p.Status
+        };
+        mostrarModal = true;
+    }
+
+    private void FecharModal() => mostrarModal = false;
+
+    private async Task Salvar()
+    {
+        if (pedidoAtual.Id == 0)
+        {
+            await PedidoService.Criar(pedidoAtual);
+        }
+        else
+        {
+            await PedidoService.Atualizar(pedidoAtual);
+            var index = pedidos.FindIndex(p => p.Id == pedidoAtual.Id);
+            if (index >= 0)
+                pedidos[index] = pedidoAtual;
+
+            pedidoAtualizadoId = pedidoAtual.Id;
+        }
+
+        mostrarModal = false;
+        pedidoAtual = new WebSocket.Models.PedidoDotNet();
+
+        _ = Task.Delay(3000).ContinueWith(_ =>
+        {
+            pedidoNovoId = null;
+            pedidoAtualizadoId = null;
+            InvokeAsync(StateHasChanged);
+        });
+    }
+
+    private async Task Deletar(int id)
+    {
+        await PedidoService.Deletar(id);
+        pedidoDeletadoId = id;
+        StateHasChanged();
+    }
+
+    private string CorStatus(string status) => status switch
+    {
+        "novo" => "primary",
+        "preparando" => "warning",
+        "entregue" => "success",
+        _ => "secondary"
+    };
+}

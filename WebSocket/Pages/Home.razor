@@ -1,0 +1,249 @@
+﻿@page "/a"
+@inject HttpClient Http
+@inject IJSRuntime JS
+@using System.Text.Json
+
+<style>
+    .card-base {
+        transition: all 0.3s ease-in-out;
+    }
+
+    /* Efeito para novo pedido */
+    .card-novo {
+        animation: pulseGlow 1s ease-in-out 3;
+        border: 3px solid #00ff88 !important;
+    }
+
+    /* Efeito para pedido atualizado */
+    .card-atualizado {
+        animation: shakeFlash 0.7s ease-in-out;
+        border: 3px solid #ffc107 !important;
+    }
+
+    @@keyframes pulseGlow {
+        0% {
+            transform: scale(1);
+            box-shadow: 0 0 0px #00ff88;
+        }
+
+        50% {
+            transform: scale(1.07);
+            box-shadow: 0 0 30px #00ff88;
+        }
+
+        100% {
+            transform: scale(1);
+            box-shadow: 0 0 0px #00ff88;
+        }
+    }
+
+    @@keyframes shakeFlash {
+        0% {
+            transform: translateX(0);
+            background-color: #fff3cd;
+        }
+
+        20% {
+            transform: translateX(-6px);
+        }
+
+        40% {
+            transform: translateX(6px);
+        }
+
+        60% {
+            transform: translateX(-6px);
+        }
+
+        80% {
+            transform: translateX(6px);
+        }
+
+        100% {
+            transform: translateX(0);
+            background-color: transparent;
+        }
+    }
+</style>
+
+
+<h2 class="mb-4">📦 Painel de Pedidos</h2>
+
+<button class="btn btn-primary mb-4" @onclick="NovoPedido">+ Novo Pedido</button>
+
+<div class="row">
+    @foreach (var p in pedidos)
+    {
+        <div class="col-12 col-md-6 col-lg-4 mb-3" @key="p.Id">
+            <div class="card shadow card-base
+                                @(p.Id == pedidoNovoId ? "card-novo" : "")
+                                @(p.Id == pedidoAtualizadoId ? "card-atualizado" : "")">
+
+                <div class="card-body">
+                    <div class="d-flex justify-content-between">
+                        <h5>#@p.Id - @p.Cliente</h5>
+                        <div>
+                            <button class="btn btn-sm btn-warning me-1" @onclick="() => Editar(p)">Editar</button>
+                            <button class="btn btn-sm btn-danger" @onclick="() => Deletar(p.Id)">Excluir</button>
+                        </div>
+                    </div>
+
+                    <p><strong>Produto:</strong> @p.Produto</p>
+                    <p><strong>Quantidade:</strong> @p.Quantidade</p>
+
+                    <span class="badge bg-@CorStatus(p.Status)">
+                        @p.Status
+                    </span>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@if (mostrarModal)
+{
+    <div class="modal d-block" style="background:rgba(0,0,0,0.5)">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5>Pedido</h5>
+                    <button class="btn-close" @onclick="FecharModal"></button>
+                </div>
+                <div class="modal-body">
+
+                    <input class="form-control mb-2" placeholder="Cliente" @bind="pedidoAtual.Cliente" />
+                    <input class="form-control mb-2" placeholder="Produto" @bind="pedidoAtual.Produto" />
+                    <input type="number" class="form-control mb-2" @bind="pedidoAtual.Quantidade" />
+                    <select class="form-select" @bind="pedidoAtual.Status">
+                        <option value="novo">Novo</option>
+                        <option value="preparando">Preparando</option>
+                        <option value="entregue">Entregue</option>
+                    </select>
+
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="FecharModal">Cancelar</button>
+                    <button class="btn btn-primary" @onclick="Salvar">Salvar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private static int porta = 3000;
+    private List<Pedido> pedidos = new();
+    private Pedido pedidoAtual = new();
+    private bool mostrarModal = false;
+    private int? pedidoNovoId;
+    private int? pedidoAtualizadoId;
+    private DotNetObjectReference<Home>? objRef;
+
+
+    protected override async Task OnInitializedAsync()
+    {
+        pedidos = await Http.GetFromJsonAsync<List<Pedido>>($"https://node-sse-1.onrender.com/pedidos") ?? new List<Pedido>();
+        objRef = DotNetObjectReference.Create(this);
+        await JS.InvokeVoidAsync("iniciarSSE", $"https://node-sse-1.onrender.com/events", objRef);
+    }
+
+    [JSInvokable]
+    public void ReceberEventoSSE(string json)
+    {
+        try
+        {
+            var data = JsonSerializer.Deserialize<JsonElement>(json);
+            if (!data.TryGetProperty("tipo", out var tipoProp)) return;
+
+            string tipo = tipoProp.GetString() ?? "";
+            switch (tipo)
+            {
+                case "conectado":
+                    Console.WriteLine("✅ SSE conectado!");
+                    break;
+
+                case "novo_pedido":
+                    if (data.TryGetProperty("pedido", out var novoProp) && novoProp.ValueKind == JsonValueKind.Object)
+                    {
+                        var novoPedido = JsonSerializer.Deserialize<Pedido>(
+                            novoProp.GetRawText(),
+                            new JsonSerializerOptions { PropertyNameCaseInsensitive = true }
+                        );
+                        if (novoPedido != null)
+                        {
+                            pedidos.Insert(0, novoPedido);
+                            pedidoNovoId = novoPedido.Id;
+
+                            InvokeAsync(StateHasChanged); // atualiza imediatamente
+
+                            _ = Task.Delay(3000).ContinueWith(_ =>
+                            {
+                                pedidoNovoId = null;
+                                InvokeAsync(StateHasChanged);
+                            });
+                        }
+                    }
+                    break;
+
+                case "pedido_atualizado":
+                    if (data.TryGetProperty("pedido", out var updProp) && updProp.ValueKind == JsonValueKind.Object)
+                    {
+                        var pAtualizado = JsonSerializer.Deserialize<Pedido>(
+                            updProp.GetRawText(),
+                            new JsonSerializerOptions { PropertyNameCaseInsensitive = true }
+                        );
+                        if (pAtualizado != null)
+                        {
+                            var index = pedidos.FindIndex(p => p.Id == pAtualizado.Id);
+                            if (index >= 0) pedidos[index] = pAtualizado;
+
+                            pedidoAtualizadoId = pAtualizado.Id;
+
+                            InvokeAsync(StateHasChanged); // atualiza imediatamente
+
+                            _ = Task.Delay(2000).ContinueWith(_ =>
+                            {
+                                pedidoAtualizadoId = null;
+                                InvokeAsync(StateHasChanged);
+                            });
+                        }
+                    }
+                    break;
+
+                case "pedido_deletado":
+                    if (data.TryGetProperty("id", out var idProp) && idProp.ValueKind == JsonValueKind.Number)
+                    {
+                        var id = idProp.GetInt32();
+                        pedidos.RemoveAll(p => p.Id == id);
+
+                        InvokeAsync(StateHasChanged); // atualiza imediatamente
+                    }
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("Erro SSE: " + ex.Message);
+        }
+    }
+
+
+    private void NovoPedido() { pedidoAtual = new Pedido(); mostrarModal = true; }
+    private void Editar(Pedido p) { pedidoAtual = new Pedido { Id = p.Id, Cliente = p.Cliente, Produto = p.Produto, Quantidade = p.Quantidade, Status = p.Status }; mostrarModal = true; }
+    private async Task Salvar()
+    {
+        if (pedidoAtual.Id == 0)
+            await Http.PostAsJsonAsync($"https://node-sse-1.onrender.com/pedidos", pedidoAtual);
+        else
+            await Http.PutAsJsonAsync($"https://node-sse-1.onrender.com/pedidos/{pedidoAtual.Id}", pedidoAtual);
+
+        mostrarModal = false;
+        pedidoAtual = new Pedido();
+    }
+    private async Task Deletar(int id) { await Http.DeleteAsync($"https://node-sse-1.onrender.com/pedidos/{id}"); pedidos.RemoveAll(p => p.Id == id); }
+    private void FecharModal() => mostrarModal = false;
+    private string CorStatus(string status) => status switch { "novo" => "primary", "preparando" => "warning", "entregue" => "success", _ => "secondary" };
+    public void Dispose() => objRef?.Dispose();
+
+    public class Pedido { public int Id { get; set; } public string Cliente { get; set; } = ""; public string Produto { get; set; } = ""; public int Quantidade { get; set; } public string Status { get; set; } = "novo"; }
+}

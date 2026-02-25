@@ -1,0 +1,325 @@
+﻿@page "/pedidos"
+@inject HttpClient Http
+@using System.Net.WebSockets
+@using System.Text.Json
+@using System.Text
+
+<style>
+
+    .card-base {
+        transition: all 0.3s ease-in-out;
+    }
+
+    /* NOVO PEDIDO */
+    .card-novo {
+        animation: pulseGlow 1s ease-in-out 3;
+        border: 3px solid #00ff88 !important;
+    }
+
+    /* PEDIDO ATUALIZADO */
+    .card-atualizado {
+        animation: shakeFlash 0.7s ease-in-out;
+        border: 3px solid #ffc107 !important;
+    }
+
+    @@keyframes pulseGlow {
+        0% {
+            transform: scale(1);
+            box-shadow: 0 0 0px #00ff88;
+        }
+
+        50% {
+            transform: scale(1.07);
+            box-shadow: 0 0 30px #00ff88;
+        }
+
+        100% {
+            transform: scale(1);
+            box-shadow: 0 0 0px #00ff88;
+        }
+    }
+
+    @@keyframes shakeFlash {
+        0% {
+            transform: translateX(0);
+            background-color: #fff3cd;
+        }
+
+        20% {
+            transform: translateX(-6px);
+        }
+
+        40% {
+            transform: translateX(6px);
+        }
+
+        60% {
+            transform: translateX(-6px);
+        }
+
+        80% {
+            transform: translateX(6px);
+        }
+
+        100% {
+            transform: translateX(0);
+            background-color: transparent;
+        }
+    }
+
+</style>
+
+<h2 class="mb-4">📦 Painel de Pedidos</h2>
+
+<button class="btn btn-primary mb-4" @onclick="NovoPedido">
+    + Novo Pedido
+</button>
+
+<div class="row">
+    @foreach (var p in pedidos)
+    {
+        <div class="col-12 col-md-6 col-lg-4 mb-3" @key="p.Id">
+            <div class="card shadow card-base
+                                @(p.Id == pedidoNovoId ? "card-novo" : "")
+                                @(p.Id == pedidoAtualizadoId ? "card-atualizado" : "")">
+
+                <div class="card-body">
+                    <div class="d-flex justify-content-between">
+                        <h5>#@p.Id - @p.Cliente</h5>
+                        <div>
+                            <button class="btn btn-sm btn-warning me-1" @onclick="() => Editar(p)">Editar</button>
+                            <button class="btn btn-sm btn-danger" @onclick="() => Deletar(p.Id)">Excluir</button>
+                        </div>
+                    </div>
+
+                    <p><strong>Produto:</strong> @p.Produto</p>
+                    <p><strong>Quantidade:</strong> @p.Quantidade</p>
+
+                    <span class="badge bg-@CorStatus(p.Status)">
+                        @p.Status
+                    </span>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@if (mostrarModal)
+{
+    <div class="modal d-block" style="background:rgba(0,0,0,0.5)">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5>Pedido</h5>
+                    <button class="btn-close" @onclick="FecharModal"></button>
+                </div>
+                <div class="modal-body">
+
+                    <input class="form-control mb-2"
+                           placeholder="Cliente"
+                           @bind="pedidoAtual.Cliente" />
+
+                    <input class="form-control mb-2"
+                           placeholder="Produto"
+                           @bind="pedidoAtual.Produto" />
+
+                    <input type="number"
+                           class="form-control mb-2"
+                           @bind="pedidoAtual.Quantidade" />
+
+                    <select class="form-select"
+                            @bind="pedidoAtual.Status">
+                        <option value="novo">Novo</option>
+                        <option value="preparando">Preparando</option>
+                        <option value="entregue">Entregue</option>
+                    </select>
+
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="FecharModal">
+                        Cancelar
+                    </button>
+                    <button class="btn btn-primary" @onclick="Salvar">
+                        Salvar
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+
+    private List<Pedido> pedidos = new();
+    private Pedido pedidoAtual = new();
+    private bool mostrarModal = false;
+
+    private int? pedidoNovoId;
+    private int? pedidoAtualizadoId;
+
+    private ClientWebSocket? socket;
+
+    protected override async Task OnInitializedAsync()
+    {
+        pedidos = await Http.GetFromJsonAsync<List<Pedido>>("http://192.168.1.115:3000/pedidos")
+                  ?? new List<Pedido>();
+
+        _ = ConectarWebSocket();
+    }
+
+    private async Task ConectarWebSocket()
+    {
+        try
+        {
+            socket = new ClientWebSocket();
+            await socket.ConnectAsync(new Uri("ws://192.168.1.115:3000"), CancellationToken.None);
+
+            while (socket.State == WebSocketState.Open)
+            {
+                var json = await ReceberMensagem(socket);
+
+                var options = new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true
+                };
+
+                var msg = JsonSerializer.Deserialize<MensagemWS>(json, options);
+                if (msg == null) continue;
+
+                await InvokeAsync(() =>
+                {
+                    switch (msg.Tipo)
+                    {
+                        case "novo_pedido":
+                            pedidos.Insert(0, msg.Pedido!);
+                            pedidoNovoId = msg.Pedido!.Id;
+
+                            _ = Task.Delay(3000).ContinueWith(_ =>
+                            {
+                                pedidoNovoId = null;
+                                InvokeAsync(StateHasChanged);
+                            });
+
+                            break;
+
+                        case "pedido_atualizado":
+                            var index = pedidos.FindIndex(p => p.Id == msg.Pedido!.Id);
+                            if (index >= 0)
+                                pedidos[index] = msg.Pedido!;
+
+                            pedidoAtualizadoId = msg.Pedido!.Id;
+
+                            _ = Task.Delay(2000).ContinueWith(_ =>
+                            {
+                                pedidoAtualizadoId = null;
+                                InvokeAsync(StateHasChanged);
+                            });
+
+                            break;
+
+                        case "pedido_deletado":
+                            pedidos.RemoveAll(p => p.Id == msg.Id);
+                            break;
+                    }
+
+                    pedidos = pedidos.ToList();
+                    StateHasChanged();
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("ERRO WS: " + ex.Message);
+        }
+    }
+
+    private async Task<string> ReceberMensagem(ClientWebSocket socket)
+    {
+        var buffer = new byte[4096];
+        using var ms = new MemoryStream();
+        WebSocketReceiveResult result;
+
+        do
+        {
+            result = await socket.ReceiveAsync(buffer, CancellationToken.None);
+            ms.Write(buffer, 0, result.Count);
+        }
+        while (!result.EndOfMessage);
+
+        return Encoding.UTF8.GetString(ms.ToArray());
+    }
+
+    private void NovoPedido()
+    {
+        pedidoAtual = new Pedido();
+        mostrarModal = true;
+    }
+
+    private void Editar(Pedido p)
+    {
+        pedidoAtual = new Pedido
+        {
+            Id = p.Id,
+            Cliente = p.Cliente,
+            Produto = p.Produto,
+            Quantidade = p.Quantidade,
+            Status = p.Status
+        };
+
+        mostrarModal = true;
+    }
+
+    private async Task Salvar()
+    {
+        if (pedidoAtual.Id == 0)
+        {
+            await Http.PostAsJsonAsync(
+                "http://192.168.1.115:3000/pedidos",
+                pedidoAtual
+            );
+        }
+        else
+        {
+            await Http.PutAsJsonAsync(
+                $"http://192.168.1.115:3000/pedidos/{pedidoAtual.Id}",
+                pedidoAtual
+            );
+        }
+
+        // NÃO mexe na lista aqui!
+        // O WebSocket vai atualizar automaticamente
+
+        mostrarModal = false;
+
+        pedidoAtual = new Pedido();
+    }
+
+    private async Task Deletar(int id)
+    {
+        await Http.DeleteAsync($"http://192.168.1.115:3000/pedidos/{id}");
+        pedidos.RemoveAll(p => p.Id == id);
+        pedidos = pedidos.ToList();
+    }
+
+    private void FecharModal()
+    {
+        mostrarModal = false;
+    }
+
+    private string CorStatus(string status) =>
+        status switch
+        {
+            "novo" => "primary",
+            "preparando" => "warning",
+            "entregue" => "success",
+            _ => "secondary"
+        };
+
+    public class MensagemWS
+    {
+        public string Tipo { get; set; } = "";
+        public Pedido? Pedido { get; set; }
+        public int Id { get; set; }
+    }
+
+}

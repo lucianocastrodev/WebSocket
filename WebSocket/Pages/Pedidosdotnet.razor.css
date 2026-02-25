@@ -1,0 +1,78 @@
+﻿.card-base {
+    transition: all 0.3s ease-in-out;
+}
+
+/* Novo pedido: pulse e glow */
+.card-novo {
+    animation: pulseGlow 1s ease-in-out 3;
+    border: 3px solid #28a745 !important;
+}
+
+/* Pedido atualizado: shake e highlight */
+.card-atualizado {
+    animation: shakeFlash 0.7s ease-in-out;
+    border: 3px solid #ffc107 !important;
+}
+
+/* Pedido deletado: fade out */
+.card-deletado {
+    animation: fadeOut 0.7s forwards;
+}
+
+@keyframes pulseGlow {
+    0% {
+        transform: scale(1);
+        box-shadow: 0 0 0px #28a745;
+    }
+
+    50% {
+        transform: scale(1.07);
+        box-shadow: 0 0 20px #28a745;
+    }
+
+    100% {
+        transform: scale(1);
+        box-shadow: 0 0 0px #28a745;
+    }
+}
+
+@keyframes shakeFlash {
+    0% {
+        transform: translateX(0);
+        background-color: #fff3cd;
+    }
+
+    20% {
+        transform: translateX(-6px);
+    }
+
+    40% {
+        transform: translateX(6px);
+    }
+
+    60% {
+        transform: translateX(-6px);
+    }
+
+    80% {
+        transform: translateX(6px);
+    }
+
+    100% {
+        transform: translateX(0);
+        background-color: transparent;
+    }
+}
+
+@keyframes fadeOut {
+    0% {
+        opacity: 1;
+        transform: scale(1);
+    }
+
+    100% {
+        opacity: 0;
+        transform: scale(0.95);
+    }
+}
+
