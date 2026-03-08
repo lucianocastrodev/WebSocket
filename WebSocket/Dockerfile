@@ -1,26 +1,15 @@
-# Estágio de build
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /app
 
-# Copia o arquivo de projeto e restaura dependências
-COPY *.csproj .
+COPY *.csproj ./
 RUN dotnet restore
 
-# Copia todo o código e publica
-COPY . .
+COPY . ./
 RUN dotnet publish -c Release -o /app/publish
 
-# Estágio de produção
 FROM nginx:alpine
-WORKDIR /usr/share/nginx/html
-
-# Remove a página padrão do nginx
-RUN rm -rf /usr/share/nginx/html/*
-
-# Copia a configuração customizada do nginx
-COPY nginx.conf /etc/nginx/nginx.conf
-
-# Copia os arquivos publicados para o local correto
 COPY --from=build /app/publish/wwwroot /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]
