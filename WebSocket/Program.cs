@@ -17,7 +17,9 @@ builder.Services.AddMsalAuthentication(options =>
 builder.Services.AddScoped(sp => new HttpClient
 {
     //BaseAddress = new Uri("http://192.168.1.115:5220/")
-    BaseAddress = new Uri("https://pedidosapi-596w.onrender.com/")
+    //BaseAddress = new Uri("https://pedidosapi-596w.onrender.com/")
+    //BaseAddress = new Uri("http://192.168.1.115:3450/")
+    BaseAddress = new Uri("http://csharp-pedidos-tth5lx-ef857e-187-77-60-115.traefik.me/")
 });
 
 builder.Services.AddScoped<PedidoService>();
